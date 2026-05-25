@@ -1,8 +1,3 @@
-// ============================================================\
-// TASKER — TypeScript типы (Исправленная обертка для Supabase)
-// src/types/database.ts
-// ============================================================\
-
 export type UserRole = 'member' | 'manager'
 export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done'
 export type TaskPriority = 'normal' | 'urgent'
@@ -98,7 +93,6 @@ export interface NewsItem {
   created_at: string
 }
 
-// Связи для фронтенда
 export interface TaskWithRelations extends Task {
   assignee: User | null
   scene: Scene | null
@@ -126,7 +120,6 @@ export interface UserHoursSummary {
   total_hours: number
 }
 
-// Главная обертка схемы Supabase
 export interface Database {
   public: {
     Tables: {
@@ -140,7 +133,9 @@ export interface Database {
       news: { Row: NewsItem; Insert: Omit<NewsItem, 'id' | 'created_at'>; Update: Partial<NewsItem> }
     }
     Views: {
-      [_ in never]: never
+      stale_tasks: { Row: StaleTask }
+      scene_progress: { Row: SceneProgress }
+      user_hours_summary: { Row: UserHoursSummary }
     }
     Functions: {
       [_ in never]: never

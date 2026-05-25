@@ -1,7 +1,7 @@
-// ============================================================
-// PROJECT HUB — Real-time хуки для React компонентов
+// ============================================================\
+// TASKER — Исправленные Real-time хуки
 // src/hooks/useRealtimeTasks.ts
-// ============================================================
+// ============================================================\
 
 'use client'
 
@@ -20,38 +20,33 @@ import type {
   StaleTask,
   SceneProgress,
   UserHoursSummary,
-  WallPost,
-  TimeLog,
 } from '@/types/database'
 
-// ============================================================
-// useTasks — главный хук Kanban-доски
-// Загружает все задачи и слушает real-time изменения
-// ============================================================
 export function useTasks() {
   const [tasks, setTasks] = useState<TaskWithRelations[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Первоначальная загрузка
   const fetchTasks = useCallback(async () => {
     const { data, error } = await tasksApi.getAll()
     if (error) { setError(error.message); return }
-    setTasks((data as TaskWithRelations[]) ?? [])
+    setTasks((data as unknown as TaskWithRelations[]) ?? [])
     setLoading(false)
   }, [])
 
   useEffect(() => {
     fetchTasks()
 
-    // Real-time подписка
-    const unsub = subscribeToTasks(async ({ eventType, new: newRow, old: oldRow }) => {
-      if (eventType === 'DELETE') {
+    const unsub = subscribeToTasks(async (payload: any) => {
+      const { eventType, new: newRow, old: oldRow } = payload
+
+      if (eventType === 'DELETE' && oldRow) {
         setTasks(prev => prev.filter(t => t.id !== oldRow.id))
         return
       }
 
-      // При INSERT или UPDATE — перезапрашиваем задачу с JOIN-ами
+      if (!newRow || !newRow.id) return
+
       const { data } = await supabase
         .from('tasks')
         .select('*, assignee:users(*), scene:scenes(*), checklist:task_checklist(*)')
@@ -61,15 +56,14 @@ export function useTasks() {
       if (!data) return
 
       setTasks(prev => {
-        if (eventType === 'INSERT') return [...prev, data as TaskWithRelations]
-        return prev.map(t => t.id === data.id ? data as TaskWithRelations : t)
+        if (eventType === 'INSERT') return [...prev, data as unknown as TaskWithRelations]
+        return prev.map(t => t.id === data.id ? (data as unknown as TaskWithRelations) : t)
       })
     })
 
     return unsub
   }, [fetchTasks])
 
-  // Группировка по статусам для Kanban
   const byStatus = useCallback((status: TaskStatus) =>
     tasks
       .filter(t => t.status === status)
@@ -77,13 +71,11 @@ export function useTasks() {
     [tasks]
   )
 
-  // Обновление статуса (drag-and-drop)
   const moveTask = useCallback(async (
     taskId: string,
     newStatus: TaskStatus,
     newSortOrder: number
   ) => {
-    // Оптимистичное обновление UI — не ждём ответа сервера
     setTasks(prev => prev.map(t =>
       t.id === taskId
         ? { ...t, status: newStatus, sort_order: newSortOrder }
@@ -95,20 +87,16 @@ export function useTasks() {
   return { tasks, loading, error, byStatus, moveTask, refetch: fetchTasks }
 }
 
-// ============================================================
-// useStaleTasks — виджет "Забытые задачи" на Dashboard
-// ============================================================
 export function useStaleTasks() {
   const [staleTasks, setStaleTasks] = useState<StaleTask[]>([])
 
   useEffect(() => {
     const load = async () => {
       const { data } = await viewsApi.staleTasks()
-      setStaleTasks(data ?? [])
+      setStaleTasks((data as unknown as StaleTask[]) ?? [])
     }
     load()
 
-    // Обновляем при любом изменении задачи
     const unsub = subscribeToTasks(() => load())
     return unsub
   }, [])
@@ -116,41 +104,33 @@ export function useStaleTasks() {
   return staleTasks
 }
 
-// ============================================================
-// useSceneProgress — прогресс-бары сцен на Dashboard
-// ============================================================
 export function useSceneProgress() {
   const [progress, setProgress] = useState<SceneProgress[]>([])
 
   useEffect(() => {
     const load = async () => {
       const { data } = await viewsApi.sceneProgress()
-      setProgress(data ?? [])
+      setProgress((data as unknown as SceneProgress[]) ?? [])
     }
     load()
 
-    // Обновляем при изменении ассетов (смена чекбоксов)
     const channel = supabase
       .channel('assets-progress')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'assets' }, load)
+      .on('postgres_changes' as any, { event: 'UPDATE', schema: 'public', table: 'assets' }, load)
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  // Общий прогресс проекта
   const overall = progress.length
-    ? Math.round(progress.reduce((sum, s) => sum + s.progress_pct, 0) / progress.length)
+    ? Math.round(progress.reduce((sum, s) => sum + s.progress_percentage, 0) / progress.length)
     : 0
 
   return { progress, overall }
 }
 
-// ============================================================
-// useWallPosts — Стенгазета (мини-чат) с real-time
-// ============================================================
 export function useWallPosts(limit = 50) {
-  const [posts, setPosts] = useState<(WallPost & { user: { name: string; color: string; initials: string } })[]>([])
+  const [posts, setPosts] = useState<any[]>([])
 
   useEffect(() => {
     const load = async () => {
@@ -159,18 +139,20 @@ export function useWallPosts(limit = 50) {
         .select('*, user:users(name, color, initials)')
         .order('created_at', { ascending: true })
         .limit(limit)
-      setPosts((data as any) ?? [])
+      setPosts(data ?? [])
     }
     load()
 
-    const unsub = subscribeToWallPosts(async ({ eventType, new: newPost }) => {
-      if (eventType !== 'INSERT') return
+    const unsub = subscribeToWallPosts(async (payload: any) => {
+      const { eventType, new: newPost } = payload
+      if (eventType !== 'INSERT' || !newPost) return
+      
       const { data } = await supabase
         .from('wall_posts')
         .select('*, user:users(name, color, initials)')
         .eq('id', newPost.id)
         .single()
-      if (data) setPosts(prev => [...prev, data as any])
+      if (data) setPosts(prev => [...prev, data])
     })
 
     return unsub
@@ -183,9 +165,6 @@ export function useWallPosts(limit = 50) {
   return { posts, sendPost }
 }
 
-// ============================================================
-// usePendingTimeLogs — для PM-панели (апрув времени)
-// ============================================================
 export function usePendingTimeLogs() {
   const [logs, setLogs] = useState<any[]>([])
 
@@ -200,14 +179,14 @@ export function usePendingTimeLogs() {
     }
     load()
 
-    const unsub = subscribeToTimeLogs(({ eventType, new: newLog, old: oldLog }) => {
+    const unsub = subscribeToTimeLogs((payload: any) => {
+      const { eventType, new: newLog } = payload
+      if (!newLog) return
       if (eventType === 'INSERT' && newLog.status === 'pending') {
-        // Новый pending лог — добавляем в список (перезагружаем с JOIN)
         load()
         return
       }
       if (eventType === 'UPDATE') {
-        // Статус изменился (approved/rejected) — убираем из списка
         setLogs(prev => prev.filter(l => l.id !== newLog.id || newLog.status === 'pending'))
       }
     })
@@ -218,16 +197,13 @@ export function usePendingTimeLogs() {
   return logs
 }
 
-// ============================================================
-// useUserHours — статистика часов для PM-панели
-// ============================================================
 export function useUserHours() {
   const [hours, setHours] = useState<UserHoursSummary[]>([])
 
   useEffect(() => {
     const load = async () => {
       const { data } = await viewsApi.userHours()
-      setHours(data ?? [])
+      setHours((data as unknown as UserHoursSummary[]) ?? [])
     }
     load()
 
