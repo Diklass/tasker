@@ -3,26 +3,13 @@
 import { useState } from 'react'
 import { BookOpen, Map, Gamepad2, Package } from 'lucide-react'
 import clsx from 'clsx'
+import dynamic from 'next/dynamic'
+import { useAllDocuments } from '@/hooks/useStorage'
 import { formatDistanceToNow } from 'date-fns'
 import { ru } from 'date-fns/locale'
 
-// Временные заглушки вместо отсутствующих компонентов
-const DocumentEditor = ({ slug, onBack }: any) => (
-  <div className="p-5">
-    <button onClick={onBack} className="mb-4 text-sm text-gray-500">← Назад</button>
-    <h2 className="text-xl font-bold">Редактор документа: {slug}</h2>
-    <p className="text-gray-400 mt-2">Компонент редактирования находится в разработке...</p>
-  </div>
-)
-
-const AssetsRegistry = () => (
-  <div className="p-5 text-gray-400">Реестр ассетов загружается...</div>
-)
-
-// Имитируем хук, пока его нет в папке hooks
-const useAllDocuments = () => {
-  return { docs: [], loading: false }
-}
+const DocumentEditor = dynamic(() => import('@/components/storage/DocumentEditor'), { ssr: false })
+const AssetsRegistry  = dynamic(() => import('@/components/storage/AssetsRegistry'),  { ssr: false })
 
 const DOC_ICONS: Record<string, any> = {
   roadmap: Map,
