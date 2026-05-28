@@ -1,161 +1,210 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  closestCorners,
-  type DragStartEvent,
-  type DragEndEvent,
-  type DragOverEvent,
+  DndContext, DragOverlay, PointerSensor,
+  useSensor, useSensors, closestCorners,
+  type DragStartEvent, type DragEndEvent, type DragOverEvent,
 } from '@dnd-kit/core'
 import { arrayMove } from '@dnd-kit/sortable'
 import clsx from 'clsx'
-import KanbanColumn from './Column'
+import KanbanColumn     from './Column'
 import { TaskCardOverlay } from './TaskCard'
-import TaskModal from './TaskModal'
-import { useTasks } from '@/hooks/useRealtimeTasks'
-import { tasksApi } from '@/lib/supabase'
-import { useToast } from '@/components/ui/ToastProvider'
+import TaskModal         from './TaskModal'
+import CreateTaskModal   from './CreateTaskModal'
+import { useTasks }      from '@/hooks/useRealtimeTasks'
+import { useCurrentUser } from '@/hooks/useCurrentUser'
+import { tasksApi, supabase } from '@/lib/supabase'
+import { useToast }      from '@/components/ui/ToastProvider'
+import type { TaskStatus } from '@/types/database'
 
-// ID текущего пользователя — в рамках теста подставляем Эльдара (Lead)
-const CURRENT_USER_ID = 'eldar-placeholder-id'
-const CURRENT_USER_NAME = 'Эльдар'
+const STATUSES: TaskStatus[] = ['backlog', 'in_progress', 'review', 'done']
+type FilterMode = 'all' | 'my' | 'rooms'
 
-const STATUSES = ['backlog', 'in_progress', 'review', 'done'] as const
-type TaskStatus = typeof STATUSES[number]
-
-export default function Board() {
-  const { tasks, loading, byStatus } = useTasks()
+export default function KanbanBoard() {
+  const { tasks, loading, byStatus, moveTask, refetch } = useTasks()
+  const { currentUser, members, currentId } = useCurrentUser()
   const { show } = useToast()
-  
-  const [activeTask, setActiveTask] = useState<any | null>(null)
-  const [modalTask, setModalTask] = useState<any | null>(null)
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    })
-  )
+  const [activeTask,    setActiveTask]    = useState<any>(null)
+  const [modalTask,     setModalTask]     = useState<any>(null)
+  const [showCreate,    setShowCreate]    = useState(false)
+  const [filterMode,    setFilterMode]    = useState<FilterMode>('all')
+  const [selMembers,    setSelMembers]    = useState<string[]>([])
+  const [scenes,        setScenes]        = useState<any[]>([])
 
-  const handleDragStart = (event: DragStartEvent) => {
-    const { active } = event
-    const task = tasks.find(t => t.id === active.id)
-    if (task) setActiveTask(task)
-  }
+  // Загружаем сцены для модалки создания
+  useEffect(() => {
+    supabase.from('scenes').select('id, name, slug').order('sort_order')
+      .then(({ data }) => setScenes(data ?? []))
+  }, [])
 
-  const handleDragOver = (event: DragOverEvent) => {
-    // dnd-kit логика для плавного перемещения между колонками
-  }
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
+  // Фильтрация
+  const filteredByStatus = useCallback((status: TaskStatus): any[] => {
+    let list = byStatus(status)
+    if (filterMode === 'my' && currentId) {
+      list = list.filter((t: any) => t.assignee?.id === currentId)
+    }
+    if (selMembers.length > 0) {
+      list = list.filter((t: any) => t.assignee && selMembers.includes(t.assignee.id))
+    }
+    return list
+  }, [byStatus, filterMode, selMembers, currentId])
+
+  const toggleMember = (id: string) =>
+    setSelMembers(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  // ── Drag & Drop ────────────────────────────────────────────
+  const handleDragStart = ({ active }: DragStartEvent) =>
+    setActiveTask(tasks.find((t: any) => t.id === active.id) ?? null)
+
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     setActiveTask(null)
+    if (!over || active.id === over.id) return
 
-    if (!over) return
-
-    const taskId = active.id as string
-    const overId = over.id as string
-
-    const task = tasks.find(t => t.id === taskId)
+    const task = tasks.find((t: any) => t.id === active.id)
     if (!task) return
 
-    // Если уронили в ту же колонку или на тот же статус
-    let newStatus: TaskStatus | null = null
-    if (STATUSES.includes(overId as any)) {
-      newStatus = overId as TaskStatus
-    } else {
-      const overTask = tasks.find(t => t.id === overId)
-      if (overTask) newStatus = overTask.status as TaskStatus
+    const overTask  = tasks.find((t: any) => t.id === over.id)
+    const newStatus = (STATUSES.includes(over.id as TaskStatus)
+      ? over.id
+      : overTask?.status ?? task.status) as TaskStatus
+
+    const columnTasks = byStatus(newStatus).filter((t: any) => t.id !== task.id)
+    const overIndex   = overTask ? columnTasks.findIndex((t: any) => t.id === overTask.id) : columnTasks.length
+
+    // 1. Оптимистичное обновление UI
+    await moveTask(task.id, newStatus, overIndex)
+
+    // 2. Реальный запрос к БД (moveTask уже делает updateStatus, но дублируем для надёжности)
+    await tasksApi.updateStatus(task.id, newStatus, overIndex)
+
+    // 3. Тост + уведомление в Telegram
+    if (newStatus !== task.status) {
+      const actorName = currentUser?.name ?? 'Участник'
+
+      if (newStatus === 'review')
+        show(`📬 "${task.title}" отправлена на проверку!`, 'success')
+      if (newStatus === 'done')
+        show(`🎉 "${task.title}" закрыта! +50 XP`, 'success')
+
+      // Fire-and-forget — не блокируем UI
+      fetch('/api/tasks/activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, newStatus, actorName }),
+      }).catch(() => {})
     }
-
-    if (newStatus && task.status !== newStatus) {
-      // 1. Оптимистично обновляем статус в базе данных через Supabase
-      const oldStatus = task.status
-      task.status = newStatus 
-
-      const { error } = await tasksApi.updateStatus(taskId, newStatus)
-
-      if (error) {
-        task.status = oldStatus // Откат при ошибке
-        show('Не удалось сохранить позицию задачи', 'error')
-        return
-      }
-
-      // 2. 🔥 Триггерим Telegram-бота через наш новый Activity API Route!
-      try {
-        await fetch('/api/tasks/activity', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            taskId: taskId,
-            newStatus: newStatus,
-            actorName: CURRENT_USER_NAME
-          }),
-        })
-      } catch (err) {
-        console.error('Ошибка логирования активности для бота:', err)
-      }
-    }
-  }
-
-  const filteredByStatus = (status: string) => {
-    return tasks.filter((t: any) => t.status === status)
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <span className="text-sm font-medium text-[#79747E] animate-pulse">Загрузка доски...</span>
+      <div className="flex items-center justify-center h-64 text-[#79747E] font-semibold">
+        Загружаем доску...
       </div>
     )
   }
 
   return (
-    <div className="p-6 max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="font-display font-black text-[24px] text-[#1C1B1F] tracking-tight mb-1">
-            Рабочее пространство
-          </h1>
-          <p className="text-[12px] text-[#79747E]">
-            Перетаскивай карточки для изменения статусов. Изменения транслируются в Telegram.
+    <>
+      <div className="p-5">
+        {/* Шапка */}
+        <div className="mb-5">
+          <h1 className="font-display font-black text-2xl mb-0.5">Kanban-доска</h1>
+          <p className="text-sm text-[#79747E]">
+            {tasks.length} задач · real-time синхронизация
+            {currentUser && (
+              <span> · <span style={{ color: currentUser.color }} className="font-semibold">{currentUser.name}</span></span>
+            )}
           </p>
         </div>
-      </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="grid grid-cols-4 gap-3.5">
-          {STATUSES.map(status => (
-            <KanbanColumn
-              key={status}
-              status={status as any}
-              tasks={filteredByStatus(status)}
-              onTaskClick={setModalTask}
-            />
-          ))}
+        {/* Фильтры */}
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+          {/* Segmented buttons */}
+          <div className="flex bg-white border border-black/[0.08] rounded-[14px] overflow-hidden">
+            {(['all', 'my', 'rooms'] as const).map(mode => {
+              const labels = { all: 'Общая доска', my: 'Мой фокус', rooms: 'По комнатам' }
+              return (
+                <button key={mode} onClick={() => setFilterMode(mode)}
+                  className={clsx(
+                    'px-4 py-2 text-[12px] font-display font-bold transition-all duration-200',
+                    filterMode === mode ? 'bg-[#E8DEF8] text-[#4A3F78]' : 'text-[#49454F] hover:bg-black/[0.04]'
+                  )}
+                >
+                  {labels[mode]}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Аватары-фильтры (только members из БД) */}
+          <div className="flex items-center gap-2">
+            {members.filter(m => m.role === 'member').map(m => (
+              <button key={m.id} onClick={() => toggleMember(m.id)} title={m.name}
+                className={clsx(
+                  'w-9 h-9 rounded-[12px] flex items-center justify-center font-display font-black text-[12px] transition-all duration-200',
+                  selMembers.includes(m.id) ? 'ring-2 ring-[#7D5ED4] scale-110' : 'opacity-70 hover:opacity-100'
+                )}
+                style={{ background: m.color_bg, color: m.color }}
+              >
+                {m.initials}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-[#FF8639] text-white rounded-[12px] text-[12px] font-display font-bold hover:bg-[#E8762E] transition-colors shadow-[0_2px_8px_rgba(255,134,57,0.35)]"
+            >
+              + Задача
+            </button>
+          </div>
         </div>
 
-        <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
-          {activeTask ? <TaskCardOverlay task={activeTask} /> : null}
-        </DragOverlay>
-      </DndContext>
+        {/* Доска */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="grid grid-cols-4 gap-3">
+            {STATUSES.map(status => (
+              <KanbanColumn
+                key={status}
+                status={status}
+                tasks={filteredByStatus(status)}
+                onTaskClick={setModalTask}
+                onAddTask={status === 'backlog' ? () => setShowCreate(true) : undefined}
+              />
+            ))}
+          </div>
 
+          <DragOverlay dropAnimation={{ duration: 200, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
+            {activeTask ? <TaskCardOverlay task={activeTask} /> : null}
+          </DragOverlay>
+        </DndContext>
+      </div>
+
+      {/* Модалка детали задачи */}
       <TaskModal
         task={modalTask}
-        currentUserId={CURRENT_USER_ID}
+        currentUserId={currentId}
         onClose={() => setModalTask(null)}
-        onUpdate={() => {}}
+        onUpdate={refetch}
       />
-    </div>
+
+      {/* Модалка создания задачи */}
+      {showCreate && currentUser && (
+        <CreateTaskModal
+          members={members}
+          scenes={scenes}
+          currentUser={currentUser}
+          onClose={() => setShowCreate(false)}
+          onCreated={refetch}
+        />
+      )}
+    </>
   )
 }
