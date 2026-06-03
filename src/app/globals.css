@@ -1,26 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Nunito+Sans:wght@400;500;600;700&display=swap');
+
+/* Tailwind CSS v4 */
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* 
+  @theme block below: VS Code may warn "Unknown at rule @theme" — это ложное предупреждение.
+  @theme — стандартный синтаксис Tailwind v4, обрабатывается postcss-плагином, а не браузером.
+  Для отключения предупреждения: VS Code → Settings → css.lint.unknownAtRules → ignore
+*/
+@theme {
+  --font-sans:    'Nunito Sans', sans-serif;
+  --font-display: 'Nunito', sans-serif;
+
+  --color-bg:       #0F1117;
+  --color-surface:  #1A1D27;
+  --color-surface2: #22263A;
+  --color-surface3: #2A2F45;
+  --color-text1:    #F1F3FA;
+  --color-text2:    #A8B0C8;
+  --color-text3:    #6B7494;
+  --color-orange:   #FF8639;
+  --color-blue:     #47CAFB;
+  --color-pink:     #FF88BD;
+  --color-green:    #4ADE80;
+  --color-purple:   #A78BFA;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+html { color-scheme: dark; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #0F1117;
+  font-family: 'Nunito Sans', sans-serif;
+  color: #F1F3FA;
+  -webkit-font-smoothing: antialiased;
 }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 50% at 10% 20%, rgba(255,134,57,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 60% at 85% 70%, rgba(71,202,251,0.07) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 99px; }
+
+.font-display { font-family: 'Nunito', sans-serif; }
+
+@keyframes slideUp {
+  from { transform: translateY(32px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes progressFill { from { width: 0%; } }
+@keyframes pulse-pending { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes toastIn {
+  from { transform: translateX(-50%) translateY(16px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
+}
+
+.animate-slide-up  { animation: slideUp 0.28s cubic-bezier(0.2,0,0,1); }
+.progress-animated { animation: progressFill 1s cubic-bezier(0.2,0,0,1) forwards; }
+.pulse-pending     { animation: pulse-pending 2s ease-in-out infinite; }
+.toast-enter       { animation: toastIn 0.22s cubic-bezier(0.2,0,0,1); }

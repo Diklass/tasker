@@ -1,0 +1,27 @@
+{
+  "output": {
+    "filePath": "repomix-output.txt",
+    "style": "markdown"
+  },
+  "include": ["**/*"],
+  "ignore": {
+    "customPatterns": [
+      "node_modules/**",
+      ".next/**",
+      "dist/**",
+      "build/**",
+      ".git/**",
+      "**/*.mp4",
+      "**/*.mp3",
+      "**/*.png",
+      "**/*.jpg",
+      "**/*.jpeg",
+      "**/*.glb",
+      "**/*.gltf",
+      "**/*.fbx",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml"
+    ]
+  }
+}
